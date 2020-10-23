@@ -16,6 +16,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
+from kubernetes import client, config
+
 
 MIN_MEM_GB = 14
 CONNECTIVITY_CHECKS = [
@@ -204,9 +206,12 @@ def get_hostname():
 
 
 def main():
+    config.load_kube_config(os.environ['SNAP_DATA'] + '/credentials/client.config')
+    v1 = client.CoreV1Api()
+
     args = {
         'bundle': os.environ.get("KUBEFLOW_BUNDLE") or "cs:kubeflow-213",
-        'channel': os.environ.get("KUBEFLOW_CHANNEL") or "stable",
+        'channel': os.environ.get("KUBEFLOW_CHANNEL") or "edge",
         'debug': os.environ.get("KUBEFLOW_DEBUG") or "false",
         'hostname': os.environ.get("KUBEFLOW_HOSTNAME") or None,
         'ignore_min_mem': os.environ.get("KUBEFLOW_IGNORE_MIN_MEM") or "false",
@@ -268,14 +273,15 @@ def main():
     # user to specify a full charm store URL if they'd like, such as
     # `cs:kubeflow-lite-123`.
     if args['bundle'] == 'full':
-        bundle = 'cs:kubeflow-219'
+        bundle = 'cs:kubeflow-221'
         bundle_type = 'full'
     elif args['bundle'] == 'lite':
-        bundle = 'cs:kubeflow-lite-6'
+        bundle = 'cs:kubeflow-lite-8'
         bundle_type = 'lite'
     elif args['bundle'] == 'edge':
-        bundle = 'cs:kubeflow-edge-6'
+        bundle = 'cs:kubeflow-edge-8'
         bundle_type = 'edge'
+
     else:
         bundle = args['bundle']
         bundle_type = 'full'
@@ -314,7 +320,7 @@ def main():
         print("Kubeflow has already been enabled.")
         sys.exit(1)
 
-    print("Deploying Kubeflow...")
+    print("Bootstrapping...")
     if args['no_proxy'] is not None:
         juju("bootstrap", "microk8s", "uk8s", "--config=juju-no-proxy=%s" % args['no_proxy'])
         juju("add-model", "kubeflow", "microk8s")
@@ -322,7 +328,9 @@ def main():
     else:
         juju("bootstrap", "microk8s", "uk8s")
         juju("add-model", "kubeflow", "microk8s")
+    print("Bootstrap complete.")
 
+    print("Successfully bootstrapped, deploying...")
     juju("deploy", bundle, "--channel", args['channel'])
 
     print("Kubeflow deployed.")
@@ -347,6 +355,13 @@ def main():
     print("Operator pods ready.")
     print("Waiting for service pods to become ready.")
 
+    try:
+        v1.read_namespaced_service('pipelines-api', 'kubeflow')
+    except client.exceptions.ApiException as err:
+        if err.status == 404:
+            print("BLAH")
+        else:
+            raise
     if bundle_type in ('full', 'lite'):
         with tempfile.NamedTemporaryFile(mode='w+') as f:
             json.dump(

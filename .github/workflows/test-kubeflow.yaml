@@ -40,8 +40,6 @@ jobs:
     needs: [build]
     strategy:
       fail-fast: false
-      matrix:
-        bundle: [lite, edge]
     steps:
     - name: Check out code
       uses: actions/checkout@v2
@@ -63,7 +61,7 @@ jobs:
     - name: Enable kubeflow
       run: |
         set -eux
-        export KUBEFLOW_BUNDLE=${{ matrix.bundle }}
+        export KUBEFLOW_BUNDLE=edge
         export KUBEFLOW_DEBUG=true
         export KUBEFLOW_IGNORE_MIN_MEM=true
         sg microk8s -c 'microk8s enable kubeflow'
@@ -80,11 +78,15 @@ jobs:
         trap 'pkill -f svc/pipelines-api' SIGINT SIGTERM EXIT
         sudo microk8s kubectl -n kubeflow port-forward svc/pipelines-api 8888:8888 &
         (i=10; while ! curl localhost:8888 ; do ((--i)) || exit; sleep 1; done)
-        sudo -E pytest -vvs -m ${{ matrix.bundle }} -k 'not kubectl'
-        sudo -E pytest -vvs -m ${{ matrix.bundle }} -k 'kubectl'
+        sudo -E pytest -vvs -m edge -k 'not kubectl'
+        sudo -E pytest -vvs -m edge -k 'kubectl'
 
     - name: Get MicroK8s pods
       run: sudo microk8s kubectl get pods -A
+      if: failure()
+
+    - name: Describe MicroK8s pods
+      run: sudo microk8s kubectl describe pods -nkubeflow
       if: failure()
 
     - name: Get pipeline logs
@@ -121,6 +123,8 @@ jobs:
     needs: [build]
     strategy:
       fail-fast: false
+      matrix:
+        bundle: [full, lite]
     steps:
     - name: Check out code
       uses: actions/checkout@v2
@@ -181,15 +185,19 @@ jobs:
           sudo pip3 install pytest sh kfp requests pyyaml
           git clone https://github.com/juju-solutions/bundle-kubeflow.git
           cd bundle-kubeflow
-          trap 'pkill -f svc/pipelines-api' SIGINT SIGTERM EXIT
+          trap 'sudo pkill -f svc/pipelines-api' SIGINT SIGTERM EXIT
           microk8s kubectl -n kubeflow port-forward svc/pipelines-api 8888:8888 &
-          (i=10; while ! curl localhost:8888 ; do ((--i)) || exit; sleep 1; done)
-          pytest -vvs -m full -k 'not kubectl'
-          pytest -vvs -m full -k 'kubectl'
+          (i=30; while ! curl localhost:8888 ; do ((--i)) || exit; sleep 1; done)
+          pytest -vvs -m ${{ matrix.bundle }} -k 'not kubectl'
+          pytest -vvs -m ${{ matrix.bundle }} -k 'kubectl'
         EOF
 
     - name: Get MicroK8s pods
       run: juju ssh ubuntu/0 sudo microk8s kubectl get pods -A --sort-by=.metadata.name
+      if: failure()
+
+    - name: Describe MicroK8s pods
+      run: juju ssh ubuntu/0 sudo microk8s kubectl describe pods -nkubeflow
       if: failure()
 
     - name: Get pipeline logs
